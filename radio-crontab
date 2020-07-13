@@ -127,7 +127,7 @@ class Radio
    def get_fname(m,date)
        part=get_part_string(m[2])
        
-       fname="#{rec_path}#{filename_prefix}_#{date.to_s.split[0]}-#{m[0].split(":").map{|z| z.rjust(2,"0")}.join("-")}_#{mrepl(m[1],rep)}_-_#{mrepl(m[2].split(/\n|\. /).take_while{|e| e!=nil}[0..1].map{|z| z[0..256]}.join("_-_"),rep)}#{part=="" ? "" : "_-_"+part}#{rec_extension}"
+       fname="#{rec_path}#{filename_prefix}_#{date.to_s.split[0]}-#{m[0].split(":").map{|z| z.rjust(2,"0")}.join("-")}_#{mrepl(m[1],rep)}_-_#{mrepl(m[2].split(/\n|\. /).take_while{|e| e!=nil}[0..1].map{|z| z[0..128]}.join("_-_"),rep)}#{part=="" ? "" : "_-_"+part}#{rec_extension}"
        
        if File.exist?(fname) then
          counter=1
@@ -158,7 +158,7 @@ class Radio
 			day_of_month=date.day.to_s
 			month=date.month.to_s
 			day_of_week=date.strftime("%w")
-			command="ffmpeg -y -i #{rec_url} -t #{hossz} -c copy -f #{rec_format} #{fname_with_path};ffup-v2 -f #{fname_with_path} -d versek && rm #{fname_with_path}"
+			command="ffmpeg -y -i #{rec_url} -t #{hossz} -c copy -f #{rec_format} #{fname_with_path};"
 			crontab_line="#{kezdet_perc} #{kezdet_ora} #{day_of_month} #{month} #{day_of_week} #{command}"
 			#puts crontab_line
 			#f.puts crontab_line
@@ -177,7 +177,7 @@ end
 class Lanchid < Radio
 #(/\<ol class\=\"articles \"\>(.*?)\<\/ol\>/im).match(ret)[1].scan(/\<div class=\"nr\"\>(.*?)\<\/div\>.*?\<div class=\"title\"\>(.*?)\<\/div\>/m)
       def initialize
-		  @rec_path="/home/walaki/rec_lanchid/"
+		  @rec_path="~/Radio-recordings/rec_lanchid/"
 		  @rec_url="http://91.82.85.44:9004/"
 		  super      
 		  @filename_prefix="Lanchid"  
@@ -208,7 +208,7 @@ end
 
 class MR1 < Radio
   def initialize
-      @rec_path="/home/walaki/rec_mr1/"
+      @rec_path="~/Radio-recordings/rec_mr1/"
       @rec_url="http://stream001.radio.hu:8080/mr1.aac"
       super      
       @filename_prefix="MR1"  
@@ -297,7 +297,7 @@ end
 
 class Katradio < Radio
     def initialize
-      @rec_path="/home/walaki/rec_katradio/"
+      @rec_path="~/Radio-recordings/rec_katradio/"
       @rec_url="http://katolikusradio.hu:9000/live_hi.mp3"
       super      
       @filename_prefix="Katradio"  
@@ -338,7 +338,7 @@ end # of class
 class Europa_radio < Radio
     def initialize
       @rec_url="http://radio2.tirek.hu:8000/debrecen"
-      @rec_path="/home/walaki/rec_europa_radio/"
+      @rec_path="~/Radio-recordings/rec_europa_radio/"
       super    
       @filename_prefix="Europa"
       @minus_perc=6
@@ -381,7 +381,7 @@ end # of class
 class Agnus_radio < Radio
     def initialize
       @rec_url="http://radio2.tirek.hu:8000/agnusradio"
-      @rec_path="/home/walaki/rec_agnus_radio/"
+      @rec_path="~/Radio-recordings/rec_agnus_radio/"
       @filename_prefix="Agnus"
       super    
       @minus_perc=5
@@ -423,7 +423,7 @@ end # of class
 class Szabadkai_radio < Radio
     def initialize
       @rec_url="http://onlineradio.hu:8010/magyar_adas.mp3"
-      @rec_path="/home/walaki/rec_szabadkai_radio/"
+      @rec_path="~/Radio-recordings/rec_szabadkai_radio/"
       super    
       @minus_perc=5
       @plus_perc=5
@@ -452,7 +452,7 @@ end # of class
 
 class Szentistvan_radio < Radio
     def initialize
-      @rec_path="/home/walaki/rec_szentistvan_radio/"
+      @rec_path="~/Radio-recordings/rec_szentistvan_radio/"
       @rec_url="http://online.szentistvanradio.hu:7000"
       super      
       @minus_perc=13
@@ -537,7 +537,7 @@ end # of class
 
 class Kontakt_radio < Radio
      def initialize
-      @rec_path="/home/walaki/rec_kontakt_radio/"
+      @rec_path="~/Radio-recordings/rec_kontakt_radio/"
       @rec_url="http://95.154.254.83:33046"
       super      
       @filename_prefix="KontaktRadio"
