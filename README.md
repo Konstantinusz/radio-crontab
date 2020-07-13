@@ -11,6 +11,6 @@ megfelelően Linux "crontab" bejegyzéseket állít elő egy my-crontabs.txt fá
 fcrontab my-crontabs.txt  
 
 Jelen állapotában csak Linux operációs rendszerrel működik. Javítgassátok.
-SZükséges hozzá az ffmpeg és a curl programok telepítése.
+Szükséges hozzá az ffmpeg és a curl programok telepítése.
 A crontab "fcrontab / fcron" változatával, implementációjával használható: https://github.com/yo8192/fcron
 
