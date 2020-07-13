@@ -1,0 +1,674 @@
+#!/usr/bin/ruby
+require "open-uri"
+require "set"
+require "time"
+#require "pry"
+require "json"
+require "timeout"
+
+Env=<<END
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/bin/site_perl:/usr/bin/vendor_perl:/usr/bin/core_perl
+LANG=hu_HU.UTF-8
+#LC_CTYPE=hu_HU.UTF-8
+END
+
+Crontab_package="fcrontab"
+DAYNAMES=["Vasárnap", "Hétfő", "Kedd", "Szerda", "Csütörtök", "Péntek", "Szombat"]
+
+Script_path=File.dirname(__FILE__)
+
+class Reader
+  attr_accessor :read
+  def initialize(v)
+    @read=v
+  end
+end
+
+class Radio
+  attr_accessor :rec_path, :rogziteni, :rec_url, :rogziteni_regex, :rogziteni_regex_alcim,:rogziteni_alcim,
+  :rec_file, :rep, :rec_format,:rec_extension,:user_agent, :minus_perc,:plus_perc,:filename_prefix
+  def initialize
+    @user_agent="Opera/9.80 (X11; Linux i686; Edition Next; Arch Linux) Presto/2.12.388 Version/12.15"
+    @rep={/^\"|\"$|[.?!]/=>"",/\<br[^>]*\>/=>"",/\r?\n/=>"_-_",/\&nbsp\;/=>"",/[^[:alnum:]^\-]+/=>"_"}
+    @rec_extension=".mp3"
+    @rec_format="mp3"
+    @rec_file="#{Script_path}/rogziteni-v2.json"
+    valami=JSON.load(File.open(rec_file,"r"){|f| f.read}).dig(rec_url)
+    @rogziteni=valami.kind_of?(Array) ? valami : valami["fo_cim"]
+    @rogziteni_alcim=valami.kind_of?(Array) ? [] : valami["al_cim"]
+    @rogziteni_regex=Regexp.new("^\s*#{rogziteni.map{|z| Regexp.escape(z)}.join('|')}\s*$","i")
+    @rogziteni_regex_alcim=Regexp.new("#{rogziteni_alcim.map{|z| Regexp.escape(z)}.join('|')}","i")
+    @minus_perc=1
+    @plus_perc=1
+    @filename_prefix=""
+    system "mkdir -p #{rec_path}"
+    
+  end
+  
+  def mrepl(s,rep)
+   ts=s.dup
+   rep.to_a.each{|k,v| ts.gsub!(k,v)}
+   return ts
+  end
+  
+  def get_page(date)
+  
+  end
+  
+  def open(url,hash={})
+    
+    page=%x{curl -s '#{url}' -H 'Accept-Encoding: gzip, deflate, sdch' -H 'Accept-Language: en-US,en;q=0.8' -H 'Upgrade-Insecure-Requests: 1' -H 'User-Agent: Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.2526.106 Safari/537.36' -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8' -H 'Cache-Control: max-age=0' -H 'Connection: keep-alive' --compressed -L}
+    return Reader.new(page)
+  end
+  
+  def get_musor_hossz(m)
+      if m[3].kind_of?(String) then
+        Time.parse(m[3])-Time.parse(m[0])+(minus_perc+plus_perc)*60 #egy perccel utána fejezi be
+      elsif m[3].kind_of?(Integer) then
+        m[3]+(minus_perc+plus_perc)*60
+      end
+  end
+  
+  def time_diff(t1,t2)
+    i1=t1
+    i2=t2
+    if Time.parse(t1)==Time.parse("00:00") then
+      i1="24:00"
+    else 
+      i1=t1  
+    end
+    
+    if Time.parse(i2)==Time.parse("00:00") then
+      i2="24:00"
+    else
+      i2=t2
+    end      
+    
+    return (Time.parse(i2)-Time.parse(i1)).abs.to_i
+  
+  end
+    
+  def get_musor_kezdet(m)
+    parsed=Time.parse(m[0])
+    kezdet=parsed-minus_perc*60
+    if kezdet.day != parsed.day then
+     return (parsed-parsed.min*60).strftime('%R')
+    else
+     return kezdet.strftime('%R') #egy percel előtte kezdi
+    end
+  end
+
+  def patch_musor(m, last_musor_min)
+  #patches the musor with length in seconds
+    if m==[] then 
+      return []
+    end
+    t2=[]
+    for i in 0..m.size-2 do 
+     diff=time_diff(m[i][0],m[i+1][0])
+     if diff>=12*60*60 then 
+       diff=[24*60*60-diff,2*3600].min
+       
+     end
+     t2[i]=[*m[i],diff] 
+    end;
+    
+    t2[m.size-1]=[*m[m.size-1],last_musor_min*60]
+    
+    return t2
+  
+  end
+  
+  def get_part_string(s)
+    return ""
+  end
+
+   def get_fname(m,date)
+       part=get_part_string(m[2])
+       
+       fname="#{rec_path}#{filename_prefix}_#{date.to_s.split[0]}-#{m[0].split(":").map{|z| z.rjust(2,"0")}.join("-")}_#{mrepl(m[1],rep)}_-_#{mrepl(m[2].split(/\n|\. /).take_while{|e| e!=nil}[0..1].map{|z| z[0..256]}.join("_-_"),rep)}#{part=="" ? "" : "_-_"+part}#{rec_extension}"
+       
+       if File.exist?(fname) then
+         counter=1
+       	 basename=File.basename(fname,rec_format)
+		 existing_counter=basename.scan(/_([0-9]+)$/).flatten[0]
+		 next_counter=if existing_counter != nil then
+		   existing_counter.to_i+1
+		 else
+		   counter
+		 end
+		 return "#{rec_path}#{basename}_#{next_counter.to_s}#{rec_extension}"
+       else 
+         return fname
+       end
+    end # def
+
+  def get_crontab_lines(date)
+    print "."
+    begin
+      Timeout.timeout(15) do
+     	  musor=get_musor(date,"")
+		  musor.map do |m|
+			fname_with_path=get_fname(m,date)
+			hossz=get_musor_hossz(m)
+			kezdet=get_musor_kezdet(m)
+			kezdet_perc=kezdet.split(":")[1]
+			kezdet_ora=kezdet.split(":")[0]
+			day_of_month=date.day.to_s
+			month=date.month.to_s
+			day_of_week=date.strftime("%w")
+			command="ffmpeg -y -i #{rec_url} -t #{hossz} -c copy -f #{rec_format} #{fname_with_path};ffup-v2 -f #{fname_with_path} -d versek && rm #{fname_with_path}"
+			crontab_line="#{kezdet_perc} #{kezdet_ora} #{day_of_month} #{month} #{day_of_week} #{command}"
+			#puts crontab_line
+			#f.puts crontab_line
+		  end.join("\n")
+      end
+    rescue => e
+        
+        puts "rescued #{self.to_s}"
+	   puts e
+	   puts e.backtrace
+		return ""
+    end
+  end
+end
+
+class Lanchid < Radio
+#(/\<ol class\=\"articles \"\>(.*?)\<\/ol\>/im).match(ret)[1].scan(/\<div class=\"nr\"\>(.*?)\<\/div\>.*?\<div class=\"title\"\>(.*?)\<\/div\>/m)
+      def initialize
+		  @rec_path="/home/walaki/rec_lanchid/"
+		  @rec_url="http://91.82.85.44:9004/"
+		  super      
+		  @filename_prefix="Lanchid"  
+		  
+      end
+      
+      def get_page(date)
+		  datum_object=date #Time.now+24*60*60
+		  datum=datum_object.to_s.split[0]
+		  #page=open("http://www.katolikusradio.hu/?m_id=5&m_op=&datum=#{datum}&ado=1&adonev=bud")
+		  ret=%x{curl http://lanchidradio.hu/}.force_encoding("utf-8").encode("utf-8") 
+    
+      end
+
+    def get_musor(date,mode)
+      #[musor_kezdet, cim, leiras, kov_musor_kezdet]
+      html=get_page(date)
+      
+      patch_musor((/\<ol class\=\"articles \"\>(.*?)\<\/ol\>/im).match(html)[1].scan(/\<div class=\"nr\"\>(.*?)\<\/div\>.*?\<div class=\"title\"\>(.*?)\<\/div\>/m).select{|z| Time.parse(z[0])>=Time.now}.map{|a,b| [a,b,"-"]}.select{|z| z[1] =~ rogziteni_regex || mode=="full"},60)
+      #<tr><td class="ido"><div class="idopont">4:00</div></td><td class="ikonok"></td><td class="musor"><h2><a name=04 href="/musoraink/adas/365741" title='adás információk'>Körkép</a></h2> (ism.)</td></tr><tr><td colspan=3 class="elvalaszto">&nbsp;</td></tr>
+      
+    end
+
+
+
+
+end
+
+class MR1 < Radio
+  def initialize
+      @rec_path="/home/walaki/rec_mr1/"
+      @rec_url="http://stream001.radio.hu:8080/mr1.aac"
+      super      
+      @filename_prefix="MR1"  
+      @minus_perc=7
+      @plus_perc=7
+      @rec_extension=".mkv"
+      @rec_format="adts"
+  end
+  
+   def get_page(date)
+      datum_object=date 
+      datum=datum_object.to_s.split[0]
+      bdate=datum
+      weeks=1
+      page=%x{ curl -s 'https://www.mediaklikk.hu/wp-content/plugins/hms-global-widgets/widgets/programGuide/programGuideChannelInterface.php?ChannelId=6&ShortCode=ks&Name=Kossuth&Dates=#{(0..(7*weeks-1)).to_a.map{|z| (Time.parse(bdate).to_date-z).to_s.split[0]}.join("%2C")}&Type=1&buttonType=icon_type' -H 'Host: www.mediaklikk.hu' -H 'User-Agent: Mozilla/5.0 (X11; Linux i686; rv:60.0) Gecko/20100101 Firefox/60.0' -H 'Accept: */*' -H 'Accept-Language: en-US,en;q=0.5' --compressed -H 'Referer: https://www.mediaklikk.hu/kossuth/' -H 'X-Requested-With: XMLHttpRequest' -H 'Connection: keep-alive' -L}.scrub.force_encoding("utf-8").encode("utf-8") ;
+      
+      
+
+    end
+    
+    def get_musor(date,mode)
+	 	
+	 	page=get_page(date)
+	 	t=page.scan(/\<li class=\"program_body[^>]*\>.*?\<\/li>/m).flatten;
+	 	
+	 	r=t.map{|z| 
+		  df=/data\-from=\"(.*?)\"/.match(z)[1];
+		  dt=/data\-till=\"(.*?)\"/.match(z)[1];
+		  title=/\<h1\>(.*?)\<\/h1\>/.match(z)[1].strip;
+		  [df,dt,title]
+		}
+
+		h=r.each_cons(2).to_a.select{|a,b| a[2]=~/rejtett kincsek/i && b[2]=~/rádiószínház/i }.map{|a,b| [b[0],a[0]]}.to_h
+		hh=r.each_cons(2).to_a.select{|a,b| a[2]=~/kabaré/i && b[2]=~/kabaré \- lexikon/i }.map{|a,b| [a[0],b[0]]}.to_h
+
+		#t2=t.select{|z| z=~/rádiószínház/i && z=~/felolvas|előad/i && z !~ /rádiószínház\-zene/i};
+		t2=t.select{|z| z=~/rádiószínház/i && z !~ /rádiószínház\-zene/i};
+
+		u=t.map{|z| 
+		  status=z.scan(/\<span class=\"status(.*)\"\>\<\/span\>/).flatten[0]
+		  df=/data\-from=\"(.*?)\"/.match(z)[1].yield_self{|q| h[q]||q};
+		  dayname=DAYNAMES[Time.parse(df).wday]
+		  dt=/data\-till=\"(.*?)\"/.match(z)[1].yield_self{|q| hh[q]||q};
+		  title=/\<h1\>(.*?)\<\/h1\>/.match(z)[1].strip;
+		  raw_desc=(/\<div class=\"program_description\"\>(.*?)\<\/div\>/im).match(z)[1].gsub(/\<\/?p\>/,"").strip
+		  desc=raw_desc.split(/\<br *\/?\>/i).map{|q| q.strip};
+		  szerzo=desc.find{|z| z=~/szerző/i}
+		  limiter_index=desc.find_index{|z| z==""}
+		  begin
+			  if limiter_index==nil then
+				fname=(desc==[] ? %Q{MR1-KOSSUTH.BLOGSPOT.HU_#{df.gsub(/[ \:]+/,"_")}_#{title.gsub(/[ :,\/\(\)\'\"]+/,"_")}_-_#{dayname}.mp4} : ((szerzo==nil ? ("MR1-KOSSUTH.BLOGSPOT.HU_#{df.gsub(/[ \:]+/,"_")}_#{title.gsub(/[ :,\/\(\)\'\"]+/,"_")}_-_#{dayname}_"+desc[1].strip.sub(/^[^a-zA-Z0-9]+/,"").yield_self{|w|+(w||"")=="" ? "" : w+" - "}) : "MR1-KOSSUTH.BLOGSPOT.HU_#{df.gsub(/[ \:]+/,"_")}_#{title.gsub(/[ :,\/\(\)\'\"]+/,"_")}_-_#{dayname}_"+szerzo.gsub(/szerző: */i,"")+" - ")+desc[0].gsub(/([0-9]+)\/([0-9]+)/){|z| $1+"-"+"%#{$1.size >= 1 ? "0"+$1.size.to_s : "1" }d" % $2.to_i}+desc.find{|z| z=~/olvas|előad/i}.yield_self{|q| q==nil ? "" : " - "+q}+".mp4").gsub(/[ :,\/\(\)\'\"\&\;]+/,"_")) #rescue nil
+			  else
+				fname_part1=(desc==[] ? "" : ((szerzo==nil ? (desc[1].strip.sub(/^[^a-zA-Z0-9]+/,"").yield_self{|w|+(w||"")=="" ? "" : w+" - "}) : szerzo.gsub(/szerző: */i,"")+" - ")+desc[0].gsub(/([0-9]+)\/([0-9]+)/){|z| $1+"-"+"%#{$1.size >= 1 ? "0"+$1.size.to_s : "1" }d" % $2.to_i}+desc.find{|z| z=~/olvas|előad/i}.yield_self{|q| q==nil ? "" : " - "+q}).gsub(/[ :,\/\(\)\'\"\&\;]+/,"_")) #rescue nil
+				szerzo=desc[limiter_index+1..-1].find{|z| z=~/szerző/i}
+				fname_part2=(desc==[] ? "" : ((szerzo==nil ? (desc[limiter_index+1..-1][1].strip.sub(/^[^a-zA-Z0-9]+/,"").yield_self{|w|+(w||"")=="" ? "" : w+" - "}) : szerzo.gsub(/szerző: */i,"")+" - ")+desc[limiter_index+1..-1][0].gsub(/([0-9]+)\/([0-9]+)/){|z| $1+"-"+"%#{$1.size >= 1 ? "0"+$1.size.to_s : "1" }d" % $2.to_i}+desc[limiter_index+1..-1].find{|z| z=~/olvas|előad/i}.yield_self{|q| q==nil ? "" : " - "+q})).gsub(/[ :,\/\(\)\'\"\&\;]+/,"_")
+				fname=("MR1-KOSSUTH.BLOGSPOT.HU_#{df.gsub(/[ \:]+/,"_")}_#{title.gsub(/[ :,\/\(\)\'\"]+/,"_")}_-_#{dayname}_"+fname_part1+"_-_"+fname_part2)[0..100]+".mp4"
+			  end
+		  rescue => e
+			#STDERR.puts e 
+			#STDERR.puts e.backtrace
+			fname=%Q{MR1-KOSSUTH.BLOGSPOT.HU_#{df.gsub(/[ \:]+/,"_")}_#{title.gsub(/[ :,\/\(\)\'\"]+/,"_")}_-_#{dayname}.mp4}
+		  end  
+		  [
+		   df,
+		   dt,
+		   title,
+		   raw_desc,
+		   desc,
+		   fname,
+		   status
+		  ]
+		}.reject{|z| z[5]==nil}.uniq{|z| z[5]}.sort_by{|z| z[0]}
+
+
+
+
+		h2=u.group_by{|z| z[0].split[0]}
+		
+		current_date=date
+		h2[(current_date).to_s.split[0]].map{|z| 
+		 [(Time.parse(z[0])-0*60).to_s.split[1].split(":")[0..1].join(":") ,z[2],z[4].join(" "),((Time.parse(z[1])-Time.parse(z[0]))+minus_perc*60+plus_perc*60).round ]
+		}.select{|z| (z[1] =~ rogziteni_regex || ((z[2] =~ rogziteni_regex_alcim) && (rogziteni_regex_alcim != Regexp.new("","i")))) || mode=="full"}
+
+	end
+end
+
+class Katradio < Radio
+    def initialize
+      @rec_path="/home/walaki/rec_katradio/"
+      @rec_url="http://katolikusradio.hu:9000/live_hi.mp3"
+      super      
+      @filename_prefix="Katradio"  
+      @minus_perc=7
+      @plus_perc=7
+    end
+    
+    def get_page(date)
+      datum_object=date #Time.now+24*60*60
+      datum=datum_object.to_s.split[0]
+      #page=open("http://www.katolikusradio.hu/?m_id=5&m_op=&datum=#{datum}&ado=1&adonev=bud")
+      page=open("http://www.katolikusradio.hu/js/ajax/musornaptar.php?datum=#{datum}&ado=1")
+      page.read.force_encoding("utf-8").encode("utf-8") 
+
+    end
+    
+    def get_musor(date,mode)
+      #[musor_kezdet, cim, leiras, kov_musor_kezdet]
+      html=get_page(date)
+      patch_musor(html.scan(/\<div class\=\"idopont\"\>(.*?)\<\/div\>.*?\<a name\=[^>]*\>(.*?)\<\/a\>.*?(\<h3\>.*?\<\/h3\>.*?\<\/tr\>|.*?\<\/tr\>)/im).map{|z| z.map{|q| q.gsub(/\<.*?\>|\r/i,"").gsub("\n","_-_").strip}},60).select{|z| z[1] =~ rogziteni_regex || z[2] =~ rogziteni_regex_alcim || mode=="full"}
+      #<tr><td class="ido"><div class="idopont">4:00</div></td><td class="ikonok"></td><td class="musor"><h2><a name=04 href="/musoraink/adas/365741" title='adás információk'>Körkép</a></h2> (ism.)</td></tr><tr><td colspan=3 class="elvalaszto">&nbsp;</td></tr>
+      
+    end
+    
+    def get_part_string(s)
+      part_string=s.scan(/([0-9]+\s*\/\s*[0-9]+\s*\.?)/).flatten[0]
+	  if part_string != nil then
+		part=part_string.gsub("/","-").gsub(/\s+|\./,"")
+	  else
+		part=""
+	  end
+    
+    end
+  
+end # of class
+
+
+class Europa_radio < Radio
+    def initialize
+      @rec_url="http://radio2.tirek.hu:8000/debrecen"
+      @rec_path="/home/walaki/rec_europa_radio/"
+      super    
+      @filename_prefix="Europa"
+      @minus_perc=6
+      @plus_perc=6
+      
+      
+    end
+    
+    def get_page(date)
+      datum_object=date #Time.now+24*60*60
+      datum=datum_object.to_s.split[0]
+      page=open("http://www.refradio.eu/radio/euradio/musor/1/?datum=#{datum}&frekvencia=1", 'User_Agent' => user_agent)
+      page.read.force_encoding("utf-8").encode("utf-8")
+
+    end
+    
+    def get_musor(date,mode)
+      #[musor_kezdet, cim, leiras, kov_musor_kezdet_string vagy musor_hossz_integer]
+      html=get_page(date)
+      t=html.gsub(/\<[^>]*?\>/,"").gsub(/\r|\t/,"").gsub(/(?>\n)+/,"\n").scan(/\n([0-9]{2,2}:[0-9]{2,2})\n(.*?)\n(.*?)\nA műsor hossza: .*?/im)
+      t2=[]
+      for i in 0..t.size-2 do t2[i]=[*t[i],time_diff(t[i][0],t[i+1][0])] end;
+      t2[t.size-1]=[*t[t.size-1],15*60]
+      #binding.pry
+      return t2.select{|z| z[1] =~ rogziteni_regex || mode=="full"}
+    end
+    
+    def get_part_string(s)
+      part_string=s.scan(/\(\s*([0-9]+\s*\/\s*[0-9]+\s*\.?)\s*\)/).flatten[0]
+	  if part_string != nil then
+		part=part_string.gsub("/","-").gsub(/\s+|\./,"")
+	  else
+		part=""
+	  end
+    
+    end
+  
+end # of class
+
+class Agnus_radio < Radio
+    def initialize
+      @rec_url="http://radio2.tirek.hu:8000/agnusradio"
+      @rec_path="/home/walaki/rec_agnus_radio/"
+      @filename_prefix="Agnus"
+      super    
+      @minus_perc=5
+      @plus_perc=5
+      @last_musor_min=60      
+      @filename_prefix="Agnus"
+    end
+    
+    def get_page(date)
+      datum_object=date #Time.now+24*60*60
+      datum=datum_object.to_s.split[0]
+      page=open("http://www.refradio.eu/radio/agnus/musor/5/?datum=#{datum}&frekvencia=5", 'User_Agent' => user_agent)
+      
+      page.read.force_encoding("utf-8").encode("utf-8")
+
+    end
+    
+    def get_musor(date,mode)
+      #[musor_kezdet, cim, leiras, kov_musor_kezdet_string vagy musor_hossz_integer]
+      html=get_page(date)
+      t=html.gsub(/\<[^>]*?\>/,"").gsub(/\r|\t/,"").gsub(/(?>\n)+/,"\n").scan(/\n([0-9]{2,2}:[0-9]{2,2})\n(.*?)\n(.*?)\nA műsor hossza: ([0-9][0-9]:[0-9][0-9])/im).map{|z| dt=Time.parse(z[3]);hossz=dt.hour*3600+dt.min*60+dt.sec;[z[0],z[1],z[2],hossz]}
+      
+      #binding.pry
+      return t.select{|z| z[1] =~ rogziteni_regex || mode=="full"}
+    end
+    
+    def get_part_string(s)
+      part_string=s.scan(/\(\s*([0-9]+\s*\/\s*[0-9]+\s*\.?)\s*\)/).flatten[0]
+	  if part_string != nil then
+		part=part_string.gsub("/","-").gsub(/\s+|\./,"")
+	  else
+		part=""
+	  end
+    
+    end
+  
+end # of class
+
+class Szabadkai_radio < Radio
+    def initialize
+      @rec_url="http://onlineradio.hu:8010/magyar_adas.mp3"
+      @rec_path="/home/walaki/rec_szabadkai_radio/"
+      super    
+      @minus_perc=5
+      @plus_perc=5
+      @last_musor_min=60      
+      @filename_prefix="Szabadkai"
+    end
+    
+    def get_page(date)
+      
+
+    end
+    
+    def get_musor(date,mode)
+      #binding.pry
+      if date.day==3 then
+        return [["16:07","IRODALMI DÉLUTÁN","","18:00"]]
+      else
+        return []
+      end
+    end
+    
+    
+  
+end # of class
+
+
+class Szentistvan_radio < Radio
+    def initialize
+      @rec_path="/home/walaki/rec_szentistvan_radio/"
+      @rec_url="http://online.szentistvanradio.hu:7000"
+      super      
+      @minus_perc=13
+      @plus_perc=13
+      @filename_prefix="SzentIstvan"
+    end
+    
+    def get_page(date)
+            
+      datum_object=date #Time.now+24*60*60
+      datum=datum_object.to_s.split[0]
+      #page=open("http://www.szentistvanradio.hu/index.php/features-mainmenu-35/msorrend-mainmenu-60", 'User_Agent' => user_agent)
+      page=%x{curl -s 'http://szentistvanradio.hu/index.php/features-mainmenu-35/msorrend-mainmenu-60' -H 'Accept-Encoding: gzip, deflate, sdch' -H 'Accept-Language: en-US,en;q=0.8' -H 'Upgrade-Insecure-Requests: 1' -H 'User-Agent: Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.2526.106 Safari/537.36' -H 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8' -H 'Cache-Control: max-age=0' -H 'Connection: keep-alive' --compressed}
+      
+      #page.force_encoding("utf-8").encode("utf-8").scrub.scan(/(#{get_date_regex_str(date)})(.*?)#{get_date_regex_str(date+24*60*60)}/i).flatten[1]
+      page.force_encoding("utf-8").encode("utf-8").scrub.scan(/(#{get_date_regex_str(date)})(.*?)(?:#{get_date_regex_str(date+24*60*60)}|$)/i).flatten[1]
+      #page.force_encoding("utf-8").encode("utf-8").scrub.scan(/(#{str})(.*?)#{str2}/i).flatten[1]
+      
+    end
+    
+    def get_date_str(date)
+      months=%w{Január Február Március Április Május Június Július Augusztus Szeptember Október November December}.map{|z| z.downcase}
+      honap=months[date.month-1]
+      
+      days=%w{Vasárnap Hétfő Kedd Szerda Csütörtök Péntek Szombat}
+      nap_nev=days[date.strftime("%w").to_i]
+      
+      day_of_month=date.day.to_s
+      year=date.year.to_s
+      
+      date_str="#{year}. #{honap} #{day_of_month}. #{nap_nev}"
+    
+    
+    end
+    
+    def get_date_regex_str(date)
+      months=%w{Január Február Március Április Május Június Július Augusztus Szeptember Október November December}.map{|z| z.downcase}
+      honap=months[date.month-1]
+      
+      days=%w{Vasárnap Hétfő Kedd Szerda Csütörtök Péntek Szombat}
+      nap_nev=days[date.strftime("%w").to_i]
+      
+      day_of_month=date.day.to_s
+      year=date.year.to_s
+      
+      date_str="[0-9]{4}\\.? *#{honap} *#{day_of_month}\\.? *#{nap_nev}"
+    
+    
+    end
+    
+    def get_musor(date,mode)
+      #[musor_kezdet, cim, leiras, kov_musor_kezdet]
+      html=get_page(date)
+      #html.scan(/([0-9]+:[0-9]+) (.*?)(?=\<br \/\>([0-9]+:[0-9]+).*?\<br \/\>)/im).map{|z| temp=z[1].split("<br />");a = (temp.size==1 ? [temp,""] :[*temp]);[z[0],*a,z[2]].flatten}.select{|z| z[1] =~ rogziteni_regex || mode=="full"}
+      #html.scan(/([0-9]+:[0-9]+) (.*?)(?=(?:[0-9]+:[0-9]+)|$)/im).map{|z| temp=z[1].split("<br />");a = (temp.size==1 ? [temp,""] :[*temp]);[z[0],*a,z[2]].flatten}
+      
+      ret=patch_musor(html.scan(/([0-9]+: *[0-9]+) (.*?)(?=(?:[0-9]+: *[0-9]+)|$)/im).map{|z| temp=z[1].split("<br />");a = (temp.size==1 ? [temp,""] :[*temp]);[z[0],*a,z[2]].flatten}.map{|z| z.compact},60).select{|z| z[1] =~ rogziteni_regex || mode=="full"}
+      ds=get_date_str(date)
+      case ds
+        when /szombat/i
+          ret.push(*%w{06:25 11:50 19:50 21:05}.map{|z| [z,"A nap verse","",15*60]})
+        when /vasárnap/i
+          ret.push(*%w{06:25 19:50 21:05}.map{|z| [z,"A nap verse","",15*60]})
+        else
+          ret.push(*%w{06:25 11:50 22:05}.map{|z| [z,"A nap verse","",15*60]})
+          
+      end
+      return ret.sort_by{|z| z[0]}
+    end
+    
+    def get_part_string(s)
+      part_string=s.scan(/\(\s*([0-9]+\s*\/\s*[0-9]+\s*\.?)\s*\)/).flatten[0]
+	  if part_string != nil then
+		part=part_string.gsub("/","-").gsub(/\s+|\./,"")
+	  else
+		part=""
+	  end
+    
+    end
+  
+end # of class
+
+class Kontakt_radio < Radio
+     def initialize
+      @rec_path="/home/walaki/rec_kontakt_radio/"
+      @rec_url="http://95.154.254.83:33046"
+      super      
+      @filename_prefix="KontaktRadio"
+      
+    end
+    
+    def get_page(date)
+      datum_object=date #Time.now+24*60*60
+      datum=datum_object.to_s.split[0]
+      page=open("http://www.kontaktradio.hu/msoraink/msoraink-idrendben", 'User_Agent' => user_agent)
+      page.read.force_encoding("utf-8").encode("utf-8").scrub.scan(/\<span [^\>]+\>#{get_date_str(date)}\<\/span\>(.*?)(?:\<span [^\>]+\>#{get_date_str(date+24*60*60)}\<\/span\>|\<\/table\>)/im).flatten[0]
+      
+    end
+    
+    def get_date_str(date)
+            
+      days=%w{Vasárnap Hétfő Kedd Szerda Csütörtök Péntek Szombat}
+      nap_nev=days[date.strftime("%w").to_i]
+      date_str="#{nap_nev}"
+        
+    end
+    
+    def get_musor(date,mode)
+      #[musor_kezdet, cim, leiras, kov_musor_kezdet]
+      html=get_page(date)
+      html.scan(/\<p [^>]+\>\<span [^>]+\>([0-9]{2,2}[.:][0-9]{2,2}) +(.*?)\<\/span\>\<\/p\>\r\n(?=\<p [^>]+\>\<span [^>]+\>([0-9]{2,2}[.:][0-9]{2,2}) +.*?\<\/span\>\<\/p\>\r\n)/im).map{|z| [z[0],z[1].gsub(/\302\240/,"").strip,"",z[2]]}.select{|z| z[1] =~ rogziteni_regex || mode=="full"}
+      
+    end
+    
+    def get_part_string(s)
+      part_string=s.scan(/\(\s*([0-9]+\s*\/\s*[0-9]+\s*\.?)\s*\)/).flatten[0]
+	  if part_string != nil then
+		part=part_string.gsub("/","-").gsub(/\s+|\./,"")
+	  else
+		part=""
+	  end
+    
+    end
+end
+mr1=MR1.new
+katradio=Katradio.new
+lanchid_radio=Lanchid.new
+
+europa_radio=Europa_radio.new
+szentistvan_radio=Szentistvan_radio.new
+
+#kontakt_radio=Kontakt_radio.new
+agnus_radio=Agnus_radio.new
+szabadkai_radio=Szabadkai_radio.new
+
+date=ARGV[0] != nil ? Time.parse(ARGV[0]) : Time.now+24*60*60
+
+if ARGV[1]=="test" then
+  binding.pry
+end
+
+
+t=[
+
+katradio.get_crontab_lines(date), 
+#lanchid_radio.get_crontab_lines(date),
+europa_radio.get_crontab_lines(date), 
+szentistvan_radio.get_crontab_lines(date),
+#kontakt_radio.get_crontab_lines(date),
+agnus_radio.get_crontab_lines(date),
+#szabadkai_radio.get_crontab_lines(date)
+mr1.get_crontab_lines(date)
+]
+
+t.delete("")
+
+crontab_lines=t.join("\n").split("\n").sort_by{|z| temp=z.split;[temp[1],temp[0]]}
+now=Time.now
+last_element=crontab_lines.collect.with_index.select{|z,i| e=z.split;Time.new(Time.now.year, e[3], e[2], e[1], e[0], 0)<now}.last
+if last_element != nil then 
+  index=last_element[1]
+else
+  index=0
+end
+#binding.pry
+crontab_lines=[*crontab_lines[0..index],"#"+"-"*70,*crontab_lines[index+1..-1]].join("\n")
+
+#.select{|z| z[2] !~ /\(ism\.\)/ && z[1] =~ rogziteni_regex}
+
+File.rename("#{Script_path}/my-crontab.txt","#{Script_path}/my-crontab.#{Time.now.to_s.split(" +")[0].gsub(/[ :]/,"_")}.txt") rescue nil
+
+File.open("#{Script_path}/my-crontab.txt","w") {|f|
+  f.puts Env
+  
+  f.puts "50 23 * * * #{Script_path}/radio-crontab"
+  f.puts "00 02 * * * #{Script_path}/radio-crontab #{Time.now.to_s.split[0]}"
+  f.puts "00 04 * * * #{Script_path}/radio-crontab #{Time.now.to_s.split[0]}"
+  f.puts "00 06 * * * #{Script_path}/radio-crontab #{Time.now.to_s.split[0]}"
+  f.puts "00 08 * * * #{Script_path}/radio-crontab #{Time.now.to_s.split[0]}"
+  f.puts "00 10 * * * #{Script_path}/radio-crontab #{Time.now.to_s.split[0]}"
+  f.puts "00 12 * * * #{Script_path}/radio-crontab #{Time.now.to_s.split[0]}"
+  f.puts "00 14 * * * #{Script_path}/radio-crontab #{Time.now.to_s.split[0]}"
+  f.puts "00 16 * * * #{Script_path}/radio-crontab #{Time.now.to_s.split[0]}"
+  f.puts "00 18 * * * #{Script_path}/radio-crontab #{Time.now.to_s.split[0]}"
+  f.puts "00 20 * * * #{Script_path}/radio-crontab #{Time.now.to_s.split[0]}"
+  f.puts "00 22 * * * #{Script_path}/radio-crontab #{Time.now.to_s.split[0]}"
+  f.puts crontab_lines
+}
+
+'
+Min  Hour Day  Mon  Weekday
+
+*    *    *    *    *  command to be executed
+
+┬    ┬    ┬    ┬    ┬
+│    │    │    │    └─  Weekday  (0=vasárnap, 1=hétfő, 2=kedd, 3=szerda, 4=csütörtök, 5=péntek, 6=szombat)
+│    │    │    └──────  Month    (1..12)
+│    │    └───────────  Day      (1..31)
+│    └────────────────  Hour     (0..23)
+└─────────────────────  Minute   (0..59)
+'
+
+
+
+
+if ARGV[0] != "dry" then
+  ret=%x{#{Crontab_package} #{Script_path}/my-crontab.txt}
+  puts ret
+end
+
+
+#<td valign=top width=20 align=right class=alap>11:00</td><td width=20>&nbsp;</td><td valign=top align=left><a name=11 href=?m_id=4&m_op=view&id=16&ado=1&adonev=bud class=kiscimlink title='általános adatok'>Hírek</a><span class=alap><br> </span></td></tr><tr><td colspan=3 bgcolor=f5faf0><img src=img/space.gif width=5 height=2></td></tr>
+#<tr><td valign=top width=20 align=right class=alap>11:04</td>
+
+#<td valign=top width=20 align=right class=alap>10:30<br><img src=img/gyermek_ifjusag.gif border=0 title="gyermek és ifjúsági műsor"></td><td valign=top align=center width=20><a href=http://katolikusradio.hu/listen-hi.m3u title='élő adás MP3 formátumban'><img src=img/playbutton.png height=21 border=0 align=absmiddle></a></td><td valign=top align=left><a name=10 href=?m_id=4&m_op=view&id=160&ado=1&adonev=bud class=kiscimlink title='általános adatok'>Varázsdoboz</a><span class=alap><br>irodalom gyerekeknek. Fésűs Éva: Csaló az üveghegyen. Felolvassa: Kristán Attila. Szerkesztő: Varga Andrea (5/4.)</span></td></tr><tr><td colspan=3 bgcolor=f5faf0><img src=img/space.gif width=5 height=2></td></tr>
+#<tr><td valign=top width=20 align=right class=alap>11:00</td>
+
+#"<td valign=top width=20 align=right class=alap>10:30<br><img src=img/gyermek_ifjusag.gif border=0 title="gyermek és ifjúsági műsor"></td><td valign=top align=center width=20><a href=http://katolikusradio.hu/listen-hi.m3u title='élő adás MP3 formátumban'><img src=img/playbutton.png height=21 border=0 align=absmiddle></a></td><td valign=top align=left><a name=10 href=?m_id=4&m_op=view&id=160&ado=1&adonev=bud class=kiscimlink title='általános adatok'>Varázsdoboz</a><span class=alap><br>irodalom gyerekeknek. Fésűs Éva: Csaló az üveghegyen. Felolvassa: Kristán Attila. Szerkesztő: Varga Andrea (5/4.)</span></td></tr><tr><td colspan=3 bgcolor=f5faf0><img src=img/space.gif width=5 height=2></td></tr>\n<tr><td valign=top width=20 align=right class=alap>11:00</td>"
+

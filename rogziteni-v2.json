@@ -1,0 +1,66 @@
+{
+"http://stream001.radio.hu:8080/mr1.aac":["Rádiószínház"],
+ "http://katolikusradio.hu:9000/live_hi.mp3": {"fo_cim":
+[
+ "Körkép",
+ "Rádiós regénytár",
+ "Olvasólámpa",
+ "Valaki ír a kezeddel",
+ "Szép írás",
+ "Quo vadis",
+ "Páholy és pódium",
+ "Angyalok citeráján",
+ "Délutáni találkozás",
+ "Lelkiségi irodalom",
+ "Ajándékkosár",
+ "Természet – tudomány",
+ "Életre-való",
+ "Kvaterka",
+ "Varázsdoboz",
+ "Esti mese",
+ "Mesebolt",
+ "Miért szeretem",
+ "Trezor",
+ "Vendég-oldal",
+ "Irodalmi összeállítás",
+ "Benső végtelen"
+],
+"al_cim": ["Teljességre hangolva","melódia és ritmus","Felolvassa","ZéGeneráció"]
+},
+"http://91.82.85.44:9004/":
+[
+ "Szabad gondolat",
+ "Csendeslépés",
+ "Csendes lépés"
+],
+ /*Európa rádió*/
+ "http://radio2.tirek.hu:8000/debrecen":
+ [
+  "Mindennapi irodalom"
+ ],
+ "http://online.szentistvanradio.hu:7000":
+ [
+  "Beszélő könyvek",
+  "Nem középiskolás fokon",
+  "Kívánságműsor",
+  "Könyvtári barangolás",
+  "A nap verse",
+  "Az erdő fohásza"
+ ],
+/* "http://95.154.254.83:33046":*/
+/* [  */
+/* ], */
+ /*Agnus rádió*/
+ "http://radio2.tirek.hu:8000/agnusradio":
+ [
+  "Irodalmi kincsek",
+  "Hangos könyvtár",
+  "Téka"
+ ],
+ /*Szabadkai Rádió*/
+ "http://onlineradio.hu:8010/magyar_adas.mp3":
+ [
+  "IRODALMI DÉLUTÁN"
+ ]
+}
+
