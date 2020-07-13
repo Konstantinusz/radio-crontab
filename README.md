@@ -5,8 +5,8 @@ Rádióműsorok rögzítésére való Ruby script program.
 
 A rögzíteni kívánt műsorok címét és/vagy alcímét a mellékelt .json fájlban kell megadni, felsorolni.
 
-A program elemzi a rádiócsatorna műsorújságját, pl reguláris kifejezések segítségével (vagy esetleg a Nokogiri is használható),
-ezzel megállapítja a rögzítésre megjelölt, rögzíteni kívánt műsorok kezdési időpontját, valamint azok hosszát. Ennek
+A program elemzi a rádiócsatorna műsorújságját, pl reguláris kifejezések segítségével (vagy esetleg a Nokogiri is használható: https://github.com/sparklemotion/nokogiri),
+Ezzel megállapítja a rögzítésre megjelölt, rögzíteni kívánt műsorok kezdési időpontját, valamint azok hosszát. Ennek
 megfelelően Linux "crontab" bejegyzéseket állít elő egy my-crontabs.txt fájlban. Ezt kell hozzáadni a crontab-unkhoz: 
 fcrontab my-crontabs.txt  
 
